@@ -1,0 +1,75 @@
+import tkinter as tk
+from src.toolbar.pdf_viewer_toolbar_item import PdfViewerToolbarItem
+
+class PdfViewerToolbar(tk.Frame):
+    def __init__(self, parent):
+        tk.Frame.__init__(self, parent, bd=1, relief=tk.RAISED)
+        self.pack(side=tk.TOP, fill=tk.X)
+
+        self.buttons = {}
+
+        # Only add a core subset of toolbar items to simplify the UI
+        core_items = [PdfViewerToolbarItem.SafeArea, PdfViewerToolbarItem.Body, PdfViewerToolbarItem.Order, PdfViewerToolbarItem.Translate]
+        for item in core_items:
+            self.add_button(item)
+
+        self.button_states = {item: False for item in self.buttons}
+        self.current_selection = None
+
+        # export and KG buttons on the right
+        self.export_button = tk.Button(self, text="Export MD", command=lambda: self.export())
+        self.export_button.pack(side='right', padx=2, pady=2)
+
+        self.kg_button = tk.Button(self, text="Generate KG", command=lambda: self.generate_kg())
+        self.kg_button.pack(side='right', padx=2, pady=2)
+
+        # Export translations (original + translated) for current page
+        self.export_translations_button = tk.Button(self, text="Export Translations", command=lambda: self.export_translations())
+        self.export_translations_button.pack(side='right', padx=2, pady=2)
+
+        # Show translations rendered as an image (useful if Tk can't render CJK fonts)
+        self.show_trans_image_button = tk.Button(self, text="Show Translations Image", command=lambda: self.show_translations_image())
+        self.show_trans_image_button.pack(side='right', padx=2, pady=2)
+
+        # Keep a stable items list for keyboard shortcuts mapping
+        self.items = core_items
+
+    def key_press(self, event):
+        if event.char.isdigit():
+            index = int(event.char) - 1  # 인덱스는 0부터 시작하므로 1을 뺍니다.
+            if 0 <= index < len(self.items):  # 인덱스가 유효한지 확인합니다.
+                self.toggle_button(self.items[index])  # 해당 항목을 가져와서 전환합니다.
+
+    def add_button(self, item):
+        self.buttons[item] = tk.Button(self, text=item.display_name, command=lambda item=item: self.toggle_button(item))
+        self.buttons[item].pack(side='left', padx=2, pady=2)
+
+    def toggle_button(self, item):
+        # Reset all buttons
+        for button_item, button_state in self.button_states.items():
+            self.button_states[button_item] = False
+            self.buttons[button_item].config(relief=tk.RAISED)
+
+        # Toggle the clicked button
+        self.button_states[item] = not self.button_states[item]
+        if self.button_states[item]:
+            self.buttons[item].config(relief=tk.SUNKEN)
+
+        self.current_selection = item
+
+        self.event_generate("<<ToolbarButtonClicked>>", when="tail")
+
+    def get_current_selection(self):
+        return self.current_selection
+    
+    def export(self):
+        self.event_generate("<<ExportButtonClicked>>", when="tail")
+
+    def export_translations(self):
+        self.event_generate("<<ExportTranslationsClicked>>", when="tail")
+
+    def show_translations_image(self):
+        self.event_generate("<<ShowTranslationsImageClicked>>", when="tail")
+
+    def generate_kg(self):
+        self.event_generate("<<GenerateKGButtonClicked>>", when="tail")
