@@ -1,30 +1,6 @@
-# pdf2md
-This project, pdf2md, transforms academic paper PDF files into digestible text files. By analyzing the layout of the PDF file, the application restructures paragraphs and translates desired content. The final result is a conveniently exported text file.
+# p2d
 
-![](/asset/pdf2md_230607.jpg)
-
-## Setup
-We recommend setting up a virtual environment for running the application. This can be done with the following commands:
-
-```
-python -m venv .venv
-
-# Activate the virtual environment depending on your platform
-# Windows
-source .venv/bin/activate
-
-# linux
-source .venv/bin/activate   # or
-. .venv/bin/activate
-```
-
-Next, install the required Python packages:
-```
-![pdf2md UI](asset/pdf2md_230607.jpg)
-
-# pdf2md
-
-`pdf2md` 是一款面向科研 PDF 的可视化处理工具，可完成扫描版 OCR、交互式段落管理、翻译、结构化 Markdown 导出与知识图谱生成，帮助快速整理和理解论文内容。
+`p2d` 是一款面向科研 PDF 的可视化处理工具，可完成扫描版 OCR、交互式段落管理、翻译、结构化 Markdown 导出与知识图谱生成，帮助快速整理和理解论文内容。
 
 ## 核心特性
 
@@ -44,8 +20,8 @@ Next, install the required Python packages:
 ### 安装步骤
 
 ```bash
-git clone <your-repo-url>
-cd pdf2md-master
+git clone https://github.com/pjmll/p2m.git
+cd p2d
 
 python -m venv .venv
 source .venv/bin/activate  # Windows 请使用 .venv\Scripts\activate
@@ -128,4 +104,4 @@ python -m src.main --f /path/to/document.pdf
 - Export to markdown (md) files with formatting.
 - Export to MHTML files, including images, tables, and equations.
 
-python -m src.main --f /home/lrj/下载/pdf2md-master/test.pdf
+python -m src.main --f /home/lrj/下载/p2d/test.pdf
