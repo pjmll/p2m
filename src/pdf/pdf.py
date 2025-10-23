@@ -11,7 +11,6 @@ from src.canvas.utility import check_overlap
 from src.service.openai_completion_service import OpenAICompletionService, CompletionResult
 from src.service.prompt_manager import prompt_manager
 from src.ocr_processor import OCRProcessor
-import pandas as pd
 
 class PdfPage:
     def __init__(self, page_number, elements = None):
@@ -114,53 +113,24 @@ class Pdf:
         # reconstruct chain list
         self.build_chain_list()
 
-    def _ocr_page_to_elements(self, page_number, page_image):
-        """使用 Tesseract OCR 识别图像中的文本块并创建 PdfElement"""
-        print(f"Page {page_number}: Processing with OCR via OCRProcessor...")
+    def _ocr_page_to_elements(self, page_number, page_image, ocr_processor, page_width, page_height):
+        """使用大模型OCR识别图像中的文本块并创建 PdfElement"""
+        print(f"Page {page_number}: Processing with OCR via LLM...")
 
-        # 使用 OCRProcessor 统一处理图像并返回 DataFrame
-        ocr = OCRProcessor()
-        ocr_data = ocr.image_to_data_df(page_image, lang='eng')
-
-        # 如果没有数据，直接返回
-        if ocr_data.empty:
+        blocks = ocr_processor.extract_blocks(page_image, lang='auto')
+        if not blocks:
             return
 
-        # 按块（block）和段落（paragraph）对文本进行分组
-        grouped = ocr_data.groupby(['block_num', 'par_num'])
+        line_height = page_height / max(len(blocks), 1)
 
-        # 获取图像的尺寸，用于坐标转换
-        img_width, img_height = page_image.size
-        doc_page = self.doc.load_page(page_number - 1)
-        page_width, page_height = doc_page.rect.width, doc_page.rect.height
-        scale_x = page_width / img_width
-        scale_y = page_height / img_height
-
-        for (block_num, par_num), group in grouped:
-            if group.empty or group['text'].str.strip().eq('').all():
+        for idx, text in enumerate(blocks):
+            if not text:
                 continue
 
-            # 计算整个文本块的边框
-            x1 = group['left'].min()
-            y1 = group['top'].min()
-            x2 = (group['left'] + group['width']).max()
-            y2 = (group['top'] + group['height']).max()
+            upper = min(page_height, page_height - idx * line_height)
+            lower = max(0.0, upper - line_height)
+            pdf_bbox = (0.0, lower, page_width, upper)
 
-            # 合并文本
-            text = ' '.join(group['text'].astype(str))
-
-            # 将 OCR 坐标转换为 PDF 坐标
-            # OCR/PIL image coordinates have origin at top-left (y increases downwards).
-            # PDF page coordinates use origin at bottom-left (y increases upwards).
-            # We need to flip the y coordinates when mapping to PDF coordinates.
-            pdf_x1 = x1 * scale_x
-            pdf_x2 = x2 * scale_x
-            # flip y: top y (y1) -> larger PDF y, bottom y (y2) -> smaller PDF y
-            pdf_y1 = page_height - (y2 * scale_y)
-            pdf_y2 = page_height - (y1 * scale_y)
-            pdf_bbox = (pdf_x1, pdf_y1, pdf_x2, pdf_y2)
-
-            # 创建 PdfElement
             element = PdfElement(page_number, PdfElementType.Text, pdf_bbox, text)
             self.context.pages[page_number - 1].append(self.context.index, element)
             self.context.index += 1
@@ -171,6 +141,8 @@ class Pdf:
         """
         # 将 doc 对象保存到实例中，以便在 _ocr_page_to_elements 中使用
         self.doc = doc
+
+        ocr_processor = OCRProcessor()
 
         # 我们不再需要 pdfminer_pages，但为了保持函数签名不变，我们按页码循环
         for page_number in range(len(doc)):
@@ -191,7 +163,13 @@ class Pdf:
             cur_page.bytes_content = byte_arr.getvalue()
 
             # 直接调用 OCR 方法，不再使用 pdfminer
-            self._ocr_page_to_elements(page_number + 1, img)
+            self._ocr_page_to_elements(
+                page_number + 1,
+                img,
+                ocr_processor,
+                cur_page.width,
+                cur_page.height,
+            )
 
     def recalculate_safe_area(self):
         for page in self.context.pages:

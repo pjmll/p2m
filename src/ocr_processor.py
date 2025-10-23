@@ -2,204 +2,241 @@
 # -*- coding: utf-8 -*-
 """
 OCR处理模块
-使用Tesseract进行扫描版PDF的文本识别
+使用大模型接口对扫描版PDF进行文本识别
 """
 
+import base64
 import os
-import sys
-import fitz  # PyMuPDF
-import pytesseract
-from PIL import Image
 from io import BytesIO
-import pandas as pd
-from typing import List, Tuple
+from typing import List, Optional
+
+import fitz  # PyMuPDF
+from PIL import Image
+from openai import OpenAI
+
+from src.service.logger import logger
+
 
 class OCRProcessor:
-    """OCR处理器，专门处理扫描版PDF"""
-    
-    def __init__(self, dpi: int = 300):
-        """
-        初始化OCR处理器
-        
-        Args:
-            dpi: 图像DPI，越高识别精度越好但处理时间越长
-        """
+    """OCR处理器，基于多模态大模型完成OCR识别"""
+
+    def __init__(
+        self,
+        dpi: int = 300,
+        model: Optional[str] = None,
+        prompt: Optional[str] = None,
+        max_output_tokens: Optional[int] = None,
+    ):
         self.dpi = dpi
-        
-        # 检查Tesseract是否可用
+        self.model = (
+            model
+            or os.getenv("OCR_MODEL")
+            or os.getenv("OPENAI_MODEL")
+            or "qwen3-vl-plus"
+        )
+
+        api_key = (
+            os.getenv("DASHSCOPE_API_KEY")
+            or os.getenv("OPENAI_API_KEY")
+            or os.getenv("AZURE_OPENAI_KEY")
+        )
+        if not api_key:
+            raise RuntimeError("未找到大模型 API Key，请设置 DASHSCOPE_API_KEY 或 OPENAI_API_KEY")
+
+        base_url = (
+            os.getenv("DASHSCOPE_API_URL")
+            or os.getenv("OPENAI_BASE_URL")
+            or os.getenv("AZURE_OPENAI_BASE_URL")
+        )
+
+        if base_url:
+            self.client = OpenAI(api_key=api_key, base_url=base_url)
+        else:
+            self.client = OpenAI(api_key=api_key)
+
+        self.prompt_template = (
+            prompt
+            or os.getenv("OCR_PROMPT")
+            or "You are an OCR engine. Extract every piece of legible text from the image in its original language ({lang}). Preserve reading order and use blank lines between paragraphs when necessary."
+        )
+        self.system_prompt = os.getenv(
+            "OCR_SYSTEM_PROMPT",
+            "You transcribe document images without adding explanations.",
+        )
+        self.max_output_tokens = max_output_tokens or int(
+            os.getenv("OCR_MAX_OUTPUT_TOKENS", "4096")
+        )
+
+    def process_pdf(self, pdf_path: str, lang: str = "auto") -> str:
+        logger.info("开始调用大模型进行OCR: %s", pdf_path)
+
         try:
-            pytesseract.get_tesseract_version()
-        except Exception as e:
-            print(f"警告：Tesseract OCR未正确安装: {e}")
-            print("请确保已安装Tesseract OCR")
-    
-    def process_pdf(self, pdf_path: str, lang: str = 'eng') -> str:
-        """
-        处理PDF文件，提取所有页面的文本
-        
-        Args:
-            pdf_path: PDF文件路径
-            lang: OCR语言，如'eng', 'chi_sim', 'eng+chi_sim'等
-            
-        Returns:
-            提取的文本内容
-        """
-        print(f"开始OCR处理PDF: {pdf_path}")
-        print(f"使用语言: {lang}")
-        
-        try:
-            # 打开PDF文档
             doc = fitz.open(pdf_path)
             total_pages = len(doc)
-            print(f"PDF总页数: {total_pages}")
-            
-            all_text = []
-            
+            logger.info("PDF总页数: %d", total_pages)
+
+            all_text: List[str] = []
+
             for page_num in range(total_pages):
-                print(f"处理第 {page_num + 1}/{total_pages} 页...")
-                
-                # 获取页面
+                logger.info("处理第 %d/%d 页", page_num + 1, total_pages)
+
                 page = doc.load_page(page_num)
-                
-                # 转换为高分辨率图像
-                matrix = fitz.Matrix(self.dpi/72, self.dpi/72)
+                matrix = fitz.Matrix(self.dpi / 72, self.dpi / 72)
                 pix = page.get_pixmap(matrix=matrix)
-                img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
-                
-                # OCR识别
-                page_text = self._ocr_image(img, lang)
-                
+                image = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+
+                page_text = self._ocr_image(image, lang)
+
                 if page_text.strip():
-                    all_text.append(f"=== 第 {page_num + 1} 页 ===\n{page_text}\n")
+                    all_text.append(f"=== 第 {page_num + 1} 页 ===\n{page_text.strip()}\n")
                 else:
                     all_text.append(f"=== 第 {page_num + 1} 页 ===\n[无文本内容]\n")
-            
+
             doc.close()
-            
-            # 合并所有文本
-            full_text = "\n".join(all_text)
-            print(f"OCR处理完成，共提取 {len(full_text)} 个字符")
-            
-            return full_text
-            
-        except Exception as e:
-            print(f"OCR处理失败: {e}")
+
+            combined = "\n".join(all_text)
+            logger.info("OCR处理完成，共提取 %d 个字符", len(combined))
+            return combined
+
+        except Exception as exc:
+            logger.error("OCR处理失败: %s", exc)
             raise
-    
-    def _ocr_image(self, image: Image.Image, lang: str) -> str:
-        """
-        对单个图像进行OCR识别
-        
-        Args:
-            image: PIL图像对象
-            lang: OCR语言
-            
-        Returns:
-            识别的文本
-        """
-        try:
-            # 使用公开方法获取详细的OCR数据（DataFrame）
-            ocr_data = self.image_to_data_df(image, lang=lang)
 
-            # 按块和段落分组
-            grouped = ocr_data.groupby(['block_num', 'par_num']) if not ocr_data.empty else []
-
-            text_blocks = []
-
-            for (block_num, par_num), group in grouped:
-                if group.empty or group['text'].str.strip().eq('').all():
-                    continue
-
-                # 合并文本
-                text = ' '.join(group['text'].astype(str))
-                text = text.strip()
-
-                if text:
-                    text_blocks.append(text)
-
-            # 合并所有文本块
-            result = '\n'.join(text_blocks)
-
-            return result
-            
-        except Exception as e:
-            print(f"图像OCR识别失败: {e}")
-            return ""
-    
-    def process_single_page(self, pdf_path: str, page_num: int, lang: str = 'eng') -> str:
-        """
-        处理PDF的单个页面
-        
-        Args:
-            pdf_path: PDF文件路径
-            page_num: 页面编号（从0开始）
-            lang: OCR语言
-            
-        Returns:
-            该页面的文本内容
-        """
+    def process_single_page(self, pdf_path: str, page_num: int, lang: str = "auto") -> str:
         try:
             doc = fitz.open(pdf_path)
             page = doc.load_page(page_num)
-            
-            # 转换为图像
-            matrix = fitz.Matrix(self.dpi/72, self.dpi/72)
+
+            matrix = fitz.Matrix(self.dpi / 72, self.dpi / 72)
             pix = page.get_pixmap(matrix=matrix)
-            img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
-            
-            # OCR识别
-            text = self._ocr_image(img, lang)
-            
+            image = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+
+            text = self._ocr_image(image, lang)
+
             doc.close()
             return text
-            
-        except Exception as e:
-            print(f"处理第{page_num}页失败: {e}")
+
+        except Exception as exc:
+            logger.error("处理第 %d 页失败: %s", page_num, exc)
             return ""
-    
-    def get_available_languages(self) -> List[str]:
-        """
-        获取可用的OCR语言列表
-        
-        Returns:
-            可用语言列表
-        """
+
+    def extract_blocks(self, image: Image.Image, lang: str = "auto") -> List[str]:
+        text = self._ocr_image(image, lang)
+        if not text.strip():
+            return []
+
+        separator = "\n\n" if "\n\n" in text else "\n"
+        blocks = [block.strip() for block in text.split(separator) if block.strip()]
+        return blocks
+
+    def _format_prompt(self, lang: str) -> str:
         try:
-            langs = pytesseract.get_languages()
-            return langs
-        except Exception as e:
-            print(f"获取语言列表失败: {e}")
-            return ['eng']  # 默认返回英语
+            return self.prompt_template.format(lang=lang)
+        except Exception:
+            return self.prompt_template
 
-    def image_to_data_df(self, image: Image.Image, lang: str = 'eng') -> 'pd.DataFrame':
-        """
-        返回 pytesseract.image_to_data 的 DataFrame 结果并做基础清洗（conf 转为数值并过滤阈值）。
-
-        Args:
-            image: PIL 图像对象
-            lang: OCR 语言
-
-        Returns:
-            过滤后的 pandas.DataFrame（如果出错则返回空 DataFrame）
-        """
+    def _ocr_image(self, image: Image.Image, lang: str) -> str:
         try:
-            df = pytesseract.image_to_data(
-                image,
-                output_type=pytesseract.Output.DATAFRAME,
-                lang=lang
-            )
+            buffer = BytesIO()
+            image.save(buffer, format="PNG")
+            image_base64 = base64.b64encode(buffer.getvalue()).decode("utf-8")
 
-            # 确保 conf 为数值类型
-            if 'conf' in df.columns:
-                df['conf'] = pd.to_numeric(df['conf'], errors='coerce').fillna(-1)
-            else:
-                df['conf'] = -1
+            user_content = [
+                {"type": "text", "text": self._format_prompt(lang)},
+                {
+                    "type": "image_url",
+                    "image_url": {"url": f"data:image/png;base64,{image_base64}"},
+                },
+            ]
 
-            # 过滤掉可信度低的结果
-            filtered = df[df['conf'] > 60]
-            return filtered
-        except Exception as e:
-            print(f"image_to_data_df 失败: {e}")
-            # 返回一个空的 DataFrame，列与 pytesseract 输出相似
-            cols = ['level','page_num','block_num','par_num','line_num','word_num','left','top','width','height','conf','text']
-            return pd.DataFrame(columns=cols)
+            messages = [
+                {
+                    "role": "system",
+                    "content": [{"type": "text", "text": self.system_prompt}],
+                },
+                {"role": "user", "content": user_content},
+            ]
+
+            response_text = self._call_model(messages)
+            return response_text.strip()
+
+        except Exception as exc:
+            logger.error("图像OCR识别失败: %s", exc)
+            return ""
+
+    def _call_model(self, messages) -> str:
+        completion = self.client.chat.completions.create(
+            model=self.model,
+            messages=messages,
+            max_tokens=self.max_output_tokens,
+        )
+        return self._extract_text_from_completion(completion)
+
+    @staticmethod
+    def _extract_text_from_response(response) -> str:
+        if hasattr(response, "output_text") and response.output_text:
+            return response.output_text
+
+        try:
+            data = response.model_dump()
+        except AttributeError:
+            data = response
+
+        if not isinstance(data, dict):
+            return ""
+
+        if data.get("output_text"):
+            return data["output_text"]
+
+        outputs = data.get("output") or []
+        texts: List[str] = []
+        for item in outputs:
+            for content in item.get("content", []):
+                text = content.get("text") or content.get("value")
+                if text:
+                    texts.append(text)
+
+        return "\n".join(texts)
+
+    @staticmethod
+    def _extract_text_from_completion(completion) -> str:
+        if hasattr(completion, "choices"):
+            choice = completion.choices[0]
+            content = getattr(choice.message, "content", None)
+            if isinstance(content, str):
+                return content.strip()
+            if isinstance(content, list):
+                texts: List[str] = []
+                for item in content:
+                    text = None
+                    if isinstance(item, dict):
+                        text = item.get("text") or item.get("value")
+                    else:
+                        text = getattr(item, "text", None)
+                    if text:
+                        texts.append(text)
+                if texts:
+                    return "\n".join(texts).strip()
+
+        try:
+            data = completion.model_dump()
+        except AttributeError:
+            data = completion
+
+        if isinstance(data, dict):
+            choices = data.get("choices") or []
+            if choices:
+                message = choices[0].get("message", {})
+                content = message.get("content")
+                if isinstance(content, str):
+                    return content.strip()
+                if isinstance(content, list):
+                    texts = []
+                    for item in content:
+                        text = item.get("text") or item.get("value")
+                        if text:
+                            texts.append(text)
+                    if texts:
+                        return "\n".join(texts).strip()
+
+        return ""

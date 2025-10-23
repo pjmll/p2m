@@ -5,7 +5,7 @@
 ## 核心特性
 
 - **交互式 PDF 查看器**：左侧渲染原始页面，右侧同步显示段落及译文。
-- **扫描版 OCR**：基于 Tesseract 自动识别纯图片 PDF，输出可编辑的正文。
+- **扫描版 OCR**：通过可配置的大模型多模态接口识别纯图片 PDF，输出可编辑的正文。
 - **翻译工作流**：支持 DashScope/Qwen 兼容的 OpenAI SDK，并可配置 RapidAPI DeepL 作为优先翻译源。
 - **结构化 Markdown 导出**：按照当前可见正文导出层次清晰的 Markdown。
 - **知识图谱生成**：读取 Markdown 内容提取实体关系，输出交互式 HTML 图谱。
@@ -14,8 +14,8 @@
 ## 环境准备
 
 - Python 3.12
-- [Tesseract OCR](https://tesseract-ocr.github.io/)（需保证命令行可调用）
-- 可选：DashScope / OpenAI / RapidAPI DeepL 的密钥，用于翻译与图谱生成
+- DashScope / OpenAI 兼容的多模态大模型 API Key（用于 OCR 与翻译）
+- 可选：RapidAPI DeepL 的密钥，用于翻译与图谱生成
 
 ### 安装步骤
 
@@ -45,16 +45,13 @@ DEEPL_RAPID_API_HOST=deepl-translator.p.rapidapi.com
 DEEPL_RAPID_API_SRC_LANG=EN
 DEEPL_RAPID_API_DST_LANG=ZH
 
-# DashScope / OpenAI 兼容接口（可选）
-OPENAI_API_KEY=your_dashscope_key
-OPENAI_MODEL=qwen3-max
+# DashScope / OpenAI 兼容接口
+DASHSCOPE_API_KEY=your_dashscope_key
 DASHSCOPE_API_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+OPENAI_MODEL=qwen3-max
+OCR_MODEL=qwen3-vl-plus
+OCR_MAX_OUTPUT_TOKENS=2048
 ```
-
-在 Debian/Ubuntu 上安装 Tesseract：
-
-```bash
-sudo apt-get install tesseract-ocr tesseract-ocr-eng
 ```
 
 ## 启动应用
@@ -91,7 +88,7 @@ python -m src.main --f /path/to/document.pdf
 
 ## 常见问题
 
-- **无 PDF 画面**：确认 Tesseract 安装成功且缓存目录可写；必要时删除同名 `.context` 文件后重试。
+- **无 PDF 画面**：确认大模型 API Key 配置正确且缓存目录可写；必要时删除同名 `.context` 文件后重试。
 - **翻译失败**：检查 `.env` 中密钥是否正确，并查看终端输出的具体错误。
 - **知识图谱为空**：请先成功导出 Markdown，确认文本中包含可识别的实体信息。
 

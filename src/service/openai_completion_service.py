@@ -98,12 +98,17 @@ class OpenAICompletionService:
                 stop=stop,
             )
 
+            reply_text = self._extract_text_from_completion(completion)
+            usage = getattr(completion, "usage", None)
+            prompt_tokens = getattr(usage, "prompt_tokens", None)
+            completion_tokens = getattr(usage, "completion_tokens", None)
+
             response = CompletionData(
                 status=CompletionResult.OK,
-                reply_text=completion.choices[0].message.content,
+                reply_text=reply_text,
                 status_text=None,
-                prompt_tokens=completion.usage.prompt_tokens,
-                completion_tokens=completion.usage.completion_tokens
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens
             )
 
             if verbose_response:
@@ -126,3 +131,50 @@ class OpenAICompletionService:
         finally:
             if verbose_prompt or verbose_response:
                 print(Style.RESET_ALL, '')
+
+    @staticmethod
+    def _extract_text_from_completion(completion) -> str:
+        try:
+            choice = completion.choices[0]
+        except Exception:
+            return ""
+
+        content = getattr(choice.message, "content", None)
+        if isinstance(content, str):
+            return content.strip()
+
+        if isinstance(content, list):
+            texts = []
+            for item in content:
+                text = None
+                if isinstance(item, dict):
+                    text = item.get("text") or item.get("value")
+                else:
+                    text = getattr(item, "text", None)
+                if text:
+                    texts.append(str(text))
+            if texts:
+                return "\n".join(texts).strip()
+
+        try:
+            data = completion.model_dump()
+        except AttributeError:
+            data = completion
+
+        if isinstance(data, dict):
+            choices = data.get("choices") or []
+            if choices:
+                message = choices[0].get("message", {})
+                content = message.get("content")
+                if isinstance(content, str):
+                    return content.strip()
+                if isinstance(content, list):
+                    texts = []
+                    for item in content:
+                        text = item.get("text") or item.get("value")
+                        if text:
+                            texts.append(str(text))
+                    if texts:
+                        return "\n".join(texts).strip()
+
+        return ""
